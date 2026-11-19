@@ -142,7 +142,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     }
   }
 
-  // 4. Preprocessing dan Prediksi Citra (EfficientNetV2-M 384x384)
+  // 4. Preprocessing dan Prediksi Citra (EfficientNetV2-M 384x384 + Threshold)
   Future<void> _predictDisease(File imageFile) async {
     if (_tfliteInterpreter == null) {
       setState(() => _isProcessing = false);
@@ -214,9 +214,23 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
         }
       }
 
+      // ======================================================================
+      // LOGIKA AMBANG BATAS (CONFIDENCE THRESHOLD 75%)
+      // ======================================================================
+      const double threshold = 75.0; // Minimal keyakinan 75%
+      final double calculatedConfidence = topProbability * 100;
+
       setState(() {
-        _predictionResult = _classLabels[topIndex];
-        _confidenceScore = topProbability * 100;
+        _confidenceScore = calculatedConfidence;
+
+        // Jika keyakinan model >= 75%, maka terverifikasi daun kopi
+        // Jika di bawah 75%, model menolak dengan status "Ini bukan daun kopi"
+        if (calculatedConfidence >= threshold) {
+          _predictionResult = _classLabels[topIndex];
+        } else {
+          _predictionResult = "Ini bukan daun kopi";
+        }
+
         _isProcessing = false;
       });
     } catch (e) {
@@ -228,11 +242,25 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
   bool get _isHealthy =>
       _predictionResult?.toLowerCase().contains('healthy') ?? false;
 
-  // 5. Informasi & Solusi Penyakit (Sudah disesuaikan dengan 4 kelas dataset kopi)
+  bool get _isNotCoffee =>
+      _predictionResult?.toLowerCase().contains('bukan daun kopi') ?? false;
+
+  // 5. Informasi & Solusi Penyakit
   Map<String, dynamic> _getDiseaseDetail(String label) {
     final lower = label.toLowerCase();
     
-    if (lower.contains('healthy')) {
+    // Penanganan khusus jika terdeteksi BUKAN DAUN KOPI
+    if (lower.contains('bukan daun kopi')) {
+      return {
+        'title': 'Bukan Daun Kopi',
+        'desc': 'Objek yang dipindai tidak teridentifikasi sebagai daun kopi atau kualitas gambar kurang jelas.',
+        'tips': [
+          'Pastikan objek yang difoto adalah daun tanaman kopi.',
+          'Arahkan kamera lebih dekat dan fokus tepat pada helai daun.',
+          'Gunakan pencahayaan yang cukup terang dan hindari foto buram.'
+        ],
+      };
+    } else if (lower.contains('healthy')) {
       return {
         'title': 'Tanaman Kopi Sehat',
         'desc': 'Daun dalam kondisi prima tanpa gejala infeksi jamur atau serangan hama.',
@@ -626,10 +654,29 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     }
 
     final detail = _getDiseaseDetail(_predictionResult!);
-    final Color statusColor =
-        _isHealthy ? const Color(0xFF2B8A3E) : const Color(0xFFD93829);
-    final Color statusBg =
-        _isHealthy ? const Color(0xFFEBFBEE) : const Color(0xFFFFEBEA);
+
+    // Penentuan warna status dinamis
+    Color statusColor;
+    Color statusBg;
+    String badgeTitle;
+    IconData badgeIcon;
+
+    if (_isHealthy) {
+      statusColor = const Color(0xFF2B8A3E); // Hijau untuk sehat
+      statusBg = const Color(0xFFEBFBEE);
+      badgeTitle = 'Daun Sehat';
+      badgeIcon = Icons.check_circle_rounded;
+    } else if (_isNotCoffee) {
+      statusColor = const Color(0xFFE67700); // Oranye/Amber jika ditolak
+      statusBg = const Color(0xFFFFF4E6);
+      badgeTitle = 'Bukan Daun Kopi';
+      badgeIcon = Icons.help_outline_rounded;
+    } else {
+      statusColor = const Color(0xFFD93829); // Merah jika terserang penyakit
+      statusBg = const Color(0xFFFFEBEA);
+      badgeTitle = 'Penyakit Terdeteksi';
+      badgeIcon = Icons.warning_amber_rounded;
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -675,15 +722,13 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            _isHealthy
-                                ? Icons.check_circle_rounded
-                                : Icons.warning_amber_rounded,
+                            badgeIcon,
                             size: 14,
                             color: statusColor,
                           ),
                           const SizedBox(width: 5),
                           Text(
-                            _isHealthy ? 'Daun Sehat' : 'Penyakit Terdeteksi',
+                            badgeTitle,
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
@@ -756,12 +801,19 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
               children: [
                 Row(
                   children: [
-                    Icon(Icons.shield_outlined,
-                        size: 18, color: Colors.green.shade800),
+                    Icon(
+                      _isNotCoffee
+                          ? Icons.info_outline
+                          : Icons.shield_outlined,
+                      size: 18,
+                      color: statusColor,
+                    ),
                     const SizedBox(width: 8),
-                    const Text(
-                      'Rekomendasi Penanganan',
-                      style: TextStyle(
+                    Text(
+                      _isNotCoffee
+                          ? 'Saran Tindakan'
+                          : 'Rekomendasi Penanganan',
+                      style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: Color(0xFF1B2E1E),

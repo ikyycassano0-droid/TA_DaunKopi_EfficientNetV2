@@ -6,6 +6,7 @@ plugins {
 }
 
 android {
+    // Kembalikan ke alamat asli agar MainActivity.kt terbaca dan tidak force close
     namespace = "com.example.kopi_app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
@@ -20,15 +21,22 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.kopi_app"
-        // Wajib minimal SDK 21 untuk TensorFlow Lite
-        minSdk = flutter.minSdkVersion
+        // ID Aplikasi keren berbahasa Inggris tetap aktif
+        applicationId = "com.coffeedoctor.ai"
+
+        // Wajib minimal API 26 untuk tflite_flutter versi 0.12.1
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Dukungan penuh untuk Emulator PC (x86_64) maupun HP Asli (arm64-v8a)
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+        }
     }
 
-    // Mencegah file model .tflite dikompres oleh Android
+    // Mencegah file model .tflite dikompresi agar utuh
     androidResources {
         noCompress += listOf("tflite", "lite")
     }
