@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,27 +19,25 @@ void main() {
 }
 
 // ======================================================================
-// STRUKTUR DATA HASIL PREPROCESSING CITRA & VALIDASI DAUN KOPI
+// STRUKTUR DATA HASIL PREPROCESSING CITRA & VALIDASI OBJEK
 // ======================================================================
 class PreprocessResult {
   final List<List<List<List<double>>>> inputTensor;
   final bool isLeafDetected;
-  final bool isCoffeeLeafLikely;
   final double leafCoverage;
   final String validationNote;
 
   PreprocessResult({
     required this.inputTensor,
     required this.isLeafDetected,
-    required this.isCoffeeLeafLikely,
     required this.leafCoverage,
     required this.validationNote,
   });
 }
 
 // ======================================================================
-// FUNGSI PREPROCESSING & VALIDASI CITRA DI BACKGROUND ISOLATE
-// Mencegah ANR dan Memfilter Daun Non-Kopi (seperti Daun Jeruk/Objek Asing)
+// FUNGSI PREPROCESSING CITRA DI BACKGROUND (ISOLATE)
+// Mencegah ANR dan Memfilter Objek Non-Daun (Meja, Lantai, Wajah, dll.)
 // ======================================================================
 PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
   final decodedImage = img.decodeImage(imageBytes);
@@ -46,9 +45,8 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
     return PreprocessResult(
       inputTensor: [],
       isLeafDetected: false,
-      isCoffeeLeafLikely: false,
       leafCoverage: 0.0,
-      validationNote: 'Gambar tidak dapat diproses',
+      validationNote: 'Citra tidak dapat diuraikan',
     );
   }
 
@@ -56,8 +54,6 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
   final resizedImage = img.copyResize(decodedImage, width: 384, height: 384);
 
   int leafPixelCount = 0;
-  int coffeeColorPixelCount = 0;
-  double totalBrightness = 0.0;
   const int totalPixels = 384 * 384;
 
   // Tensor input Float [1, 384, 384, 3] dalam rentang [0.0 - 255.0]
@@ -73,21 +69,14 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
           final double g = pixel.g.toDouble();
           final double b = pixel.b.toDouble();
 
-          final double brightness = (r + g + b) / 3.0;
-          totalBrightness += brightness;
+          // Deteksi klorofil/jaringan daun (daun hijau atau bercak penyakit)
+          final bool isGreenChlorophyll =
+              (g > r * 1.05) && (g > b * 1.10) && (g > 35.0);
+          final bool isDiseaseTissue =
+              (r > b * 1.20) && (g > b) && (r >= 60.0);
 
-          // 1. Uji Piksel Daun Alami (Klorofil: Hijau lebih dominan dari Merah & Biru)
-          final bool isGreenLeaf = (g > r * 1.05) && (g > b * 1.12) && (g > 35.0);
-          if (isGreenLeaf) {
+          if (isGreenChlorophyll || isDiseaseTissue) {
             leafPixelCount++;
-
-            // 2. Uji Spektrum Khas Daun Kopi (Karakter Hijau Tua / Deep Forest Green)
-            // Daun jeruk umumnya memiliki pigmen kuning-hijau muda terang (g dan r tinggi)
-            final double greenExcess = g - r;
-            final bool isCoffeeTone = (greenExcess >= 14.0) && (brightness <= 175.0);
-            if (isCoffeeTone) {
-              coffeeColorPixelCount++;
-            }
           }
 
           return [r, g, b];
@@ -97,29 +86,16 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
   );
 
   final double leafCoverage = (leafPixelCount / totalPixels) * 100.0;
-  final double coffeeToneRatio = leafPixelCount > 0
-      ? (coffeeColorPixelCount / leafPixelCount) * 100.0
-      : 0.0;
-
-  // Syarat Objek Daun: Minimal 30% area foto terdeteksi pigmen daun
-  final bool isLeaf = leafCoverage >= 30.0;
-
-  // Syarat Daun Kopi: Karakter spektrum hijau pekat khas famili Rubiaceae (Kopi)
-  final bool isCoffeeLikely = isLeaf && (coffeeToneRatio >= 28.0);
-
-  String note = 'Valid';
-  if (!isLeaf) {
-    note = 'Objek bukan daun (tidak ditemukan klorofil daun yang cukup)';
-  } else if (!isCoffeeLikely) {
-    note = 'Karakteristik spektrum daun tidak cocok dengan famili tanaman kopi (terdeteksi daun asing/tanaman lain)';
-  }
+  // Minimal 12% area foto memuat karakteristik visual daun/jaringan daun
+  final bool isLeaf = leafCoverage >= 12.0;
 
   return PreprocessResult(
     inputTensor: tensor,
     isLeafDetected: isLeaf,
-    isCoffeeLeafLikely: isCoffeeLikely,
     leafCoverage: leafCoverage,
-    validationNote: note,
+    validationNote: isLeaf
+        ? 'Objek Daun Terdeteksi'
+        : 'Objek bukan daun (tidak ditemukan pigmen daun yang cukup)',
   );
 }
 
@@ -210,9 +186,9 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
           .toList();
 
       if (mounted) setState(() {});
-      debugPrint("✅ Model dan Label TFLite Berhasil Dimuat: $_classLabels");
+      debugPrint("Model dan Label TFLite Berhasil Dimuat: $_classLabels");
     } catch (e) {
-      debugPrint("❌ Gagal memuat model: $e");
+      debugPrint("Gagal memuat model: $e");
     }
   }
 
@@ -232,7 +208,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
       );
 
       if (pickedFile != null && mounted) {
-        debugPrint("📸 Foto dipilih: ${pickedFile.path}");
+        debugPrint("Foto dipilih: ${pickedFile.path}");
         setState(() {
           _selectedImage = File(pickedFile.path);
           _predictionResult = null;
@@ -241,7 +217,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
         _predictDisease(_selectedImage!);
       }
     } catch (e) {
-      debugPrint("⚠️ Info ImagePicker: $e");
+      debugPrint("Info ImagePicker: $e");
     } finally {
       _isPickerActive = false;
     }
@@ -272,9 +248,9 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     }
   }
 
-  // 4. Preprocessing di Background Worker, Validasi Daun Kopi, & Prediksi TFLite
+  // 4. Preprocessing di Background Worker, Validasi & Prediksi Sesuai Colab
   Future<void> _predictDisease(File imageFile) async {
-    if (_tfliteInterpreter == null) {
+    if (_tfliteInterpreter == null || _classLabels.isEmpty) {
       if (!mounted) return;
       setState(() => _isProcessing = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -300,7 +276,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     try {
       final imageBytes = await imageFile.readAsBytes();
 
-      // Jalankan decode, resize, dan validasi spektrum daun kopi di Isolate
+      // Jalankan decode citra di Background Isolate
       final PreprocessResult prep = await compute(
         _preprocessAndValidateImageSync,
         imageBytes,
@@ -311,51 +287,75 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
         return;
       }
 
-      // ======================================================================
-      // PENGECEKAN AMBANG BATAS VALIDASI DAUN KOPI
-      // Jika terdeteksi daun tanaman lain (seperti daun jeruk) atau benda asing
-      // ======================================================================
-      if (!prep.isLeafDetected || !prep.isCoffeeLeafLikely) {
-        debugPrint("⛔ Ditolak Filter: ${prep.validationNote}");
+      // Saring langsung jika foto bukan objek daun (meja, lantai, wajah, dll.)
+      if (!prep.isLeafDetected) {
+        debugPrint("Ditolak Filter: ${prep.validationNote}");
 
         if (!mounted) return;
         setState(() {
-          _confidenceScore = prep.isLeafDetected ? 35.0 : 15.0;
+          _confidenceScore = 0.0;
           _predictionResult = "Ini bukan daun kopi";
           _isProcessing = false;
         });
         return;
       }
 
-      // Jika lolos validasi daun kopi, jalankan model AI EfficientNetV2-M
+      // Jalankan model AI EfficientNetV2-M
       var outputTensor = List.filled(1 * _classLabels.length, 0.0)
           .reshape([1, _classLabels.length]);
 
       _tfliteInterpreter!.run(prep.inputTensor, outputTensor);
 
-      List<double> probabilities = List<double>.from(outputTensor[0]);
-      debugPrint("🔍 NILAI PROBABILITAS TFLITE: $probabilities");
+      // Konversi aman untuk tipe data TFLite
+      List<double> rawOutputs = (outputTensor[0] as List)
+          .map((e) => (e as num).toDouble())
+          .toList();
+      debugPrint("NILAI RAW OUTPUT TFLITE: $rawOutputs");
 
-      int topIndex = 0;
-      double topProbability = probabilities[0];
-      for (int i = 1; i < probabilities.length; i++) {
-        if (probabilities[i] > topProbability) {
-          topProbability = probabilities[i];
-          topIndex = i;
-        }
+      // ======================================================================
+      // LOGIKA AMBANG BATAS PERSIS SEPERTI GOOGLE COLAB
+      // ======================================================================
+      double maxScore = rawOutputs.reduce(math.max);
+      int topIndex = rawOutputs.indexOf(maxScore);
+
+      // Cek apakah output model berupa skor Logit mentah atau Softmax
+      bool isLogitOutput = rawOutputs.any((val) => val < 0.0 || val > 1.0) ||
+          (rawOutputs.reduce((a, b) => a + b) - 1.0).abs() > 0.08;
+
+      double finalConfidencePercent = 0.0;
+      bool isAcceptedAsCoffee = false;
+
+      if (isLogitOutput) {
+        // MODE LOGIT: rumus Softmax manual dari Colab
+        List<double> expList =
+            rawOutputs.map((z) => math.exp(z - maxScore)).toList();
+        double sumExp = expList.reduce((a, b) => a + b);
+        List<double> softmax = expList.map((e) => e / sumExp).toList();
+        finalConfidencePercent = softmax[topIndex] * 100.0;
+
+        // Ambang batas Logit: batas_minimal = 7.0 dari Colab
+        const double batasMinimalLogit = 7.0;
+        isAcceptedAsCoffee = maxScore >= batasMinimalLogit;
+
+        debugPrint(
+            "[MODE LOGIT] Skor Tertinggi: ${maxScore.toStringAsFixed(2)} | Batas: $batasMinimalLogit | Diterima: $isAcceptedAsCoffee | Keyakinan: ${finalConfidencePercent.toStringAsFixed(1)}%");
+      } else {
+        // MODE SOFTMAX CADANGAN:
+        finalConfidencePercent = maxScore * 100.0;
+        const double threshold = 75.0;
+        isAcceptedAsCoffee = finalConfidencePercent >= threshold;
+
+        debugPrint(
+            "[MODE SOFTMAX] Probabilitas: ${finalConfidencePercent.toStringAsFixed(1)}%");
       }
-
-      // Ambang batas keyakinan model minimal 75%
-      const double threshold = 75.0;
-      final double calculatedConfidence = topProbability * 100;
 
       if (!mounted) return;
       setState(() {
-        _confidenceScore = calculatedConfidence;
-
-        if (calculatedConfidence >= threshold) {
+        if (isAcceptedAsCoffee) {
+          _confidenceScore = finalConfidencePercent;
           _predictionResult = _classLabels[topIndex];
         } else {
+          _confidenceScore = 0.0;
           _predictionResult = "Ini bukan daun kopi";
         }
 
@@ -363,7 +363,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
       });
     } catch (e) {
       if (mounted) setState(() => _isProcessing = false);
-      debugPrint("❌ Gagal memproses gambar: $e");
+      debugPrint("Gagal memproses gambar: $e");
     }
   }
 
@@ -383,17 +383,17 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     if (lower.contains('bukan daun kopi')) {
       return {
         'title': 'Bukan Daun Kopi / Tidak Teridentifikasi',
-        'pathogen': 'Objek Asing / Spesies Non-Kopi',
+        'pathogen': 'Spesies Non-Kopi / Objek Tidak Valid',
         'desc':
-            'Citra yang dipindai terdeteksi sebagai daun tanaman lain (seperti daun jeruk, mangga, gulma) atau benda non-daun. Model AI menolak citra ini untuk menjaga akurasi diagnosa perkebunan kopi.',
+            'Citra ditolak karena tidak memenuhi ambang batas kecocokan representasi fitur daun kopi (nilai skor di bawah batas minimal model). Model menolak objek ini agar tidak terjadi salah diagnosa pada tanaman selain kopi.',
         'gejala': [
-          'Karakteristik urat, bentuk helaian, atau spektrum klorofil tidak sesuai dengan morfologi genus Coffea.',
-          'Objek di luar famili tanaman kopi (daun jeruk, daun tanaman buah lain, tanah, atau benda sekitar).',
-          'Tingkat pencahayaan kamera tidak seimbang atau objek daun terlalu jauh dari lensa.'
+          'Skor kecocokan fitur visual daun kopi di bawah ambang batas validasi (Logit < 7.0).',
+          'Terdeteksi daun tanaman lain (seperti daun mangga, daun jeruk, gulma) atau benda bukan daun.',
+          'Kualitas pencahayaan kurang memadai atau sudut pemotretan terlalu jauh dari helai daun utama.'
         ],
         'pengendalian': {
-          'Saran Pengambilan Foto': [
-            'Pastikan objek yang difoto adalah daun tanaman kopi (Arabika / Robusta).',
+          'Panduan Pengambilan Gambar': [
+            'Pastikan objek yang difoto adalah daun tanaman kopi asli (Arabika / Robusta).',
             'Arahkan kamera tegak lurus dan fokus pada helai daun dengan jarak 10 - 20 cm.',
             'Hindari latar belakang yang memuat banyak daun tanaman selain kopi.'
           ]
@@ -491,7 +491,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
       };
     }
 
-    // 5. BERCAK DAUN PHOMA / HAWAR DAUN (Phoma costaricensis) - SUMBER RESMI BALITTRI & CIRAD
+    // 5. BERCAK DAUN PHOMA / HAWAR DAUN (Phoma costaricensis)
     if (lower.contains('phoma')) {
       return {
         'title': 'Bercak Daun Phoma (Hawar Daun & Ranting)',
@@ -1161,7 +1161,9 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Tingkat Keyakinan (Confidence)',
+                      _isNotCoffee
+                          ? 'Tingkat Kecocokan Fitur Daun'
+                          : 'Tingkat Keyakinan (Confidence)',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -1169,7 +1171,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
                       ),
                     ),
                     Text(
-                      '${_confidenceScore.toStringAsFixed(1)}%',
+                      _isNotCoffee ? 'Ditolak' : '${_confidenceScore.toStringAsFixed(1)}%',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
@@ -1182,7 +1184,9 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: LinearProgressIndicator(
-                    value: (_confidenceScore / 100).clamp(0.0, 1.0),
+                    value: _isNotCoffee
+                        ? 0.05
+                        : (_confidenceScore / 100).clamp(0.0, 1.0),
                     minHeight: 8,
                     backgroundColor: Colors.grey.shade100,
                     valueColor: AlwaysStoppedAnimation<Color>(statusColor),
@@ -1306,7 +1310,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     );
   }
 
-  // Komponen Kartu Kategori Pengendalian (Sesuai Diagram Warna Panduan)
+  // Komponen Kartu Kategori Pengendalian
   Widget _buildControlCategoryCard({
     required String category,
     required List<String> items,
@@ -1654,7 +1658,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
               ),
               const SizedBox(height: 8),
               Text(
-                'Aplikasi ini menggunakan deep learning EfficientNetV2-M beresolusi 384x384 untuk mengenali 4 kondisi daun kopi: Sehat, Karat Daun, Bercak Cercospora, dan Phoma secara instan dan 100% offline (Edge AI / TFLite). Dilengkapi filter validasi spektrum daun kopi untuk menolak daun asing/bukan daun kopi.',
+                'Aplikasi ini menggunakan deep learning EfficientNetV2-M beresolusi 384x384 untuk mengenali 4 kondisi daun kopi: Sehat, Karat Daun, Bercak Cercospora, dan Phoma secara instan dan 100% offline (Edge AI / TFLite). Dilengkapi integrasi threshold logit untuk menolak daun asing/bukan daun kopi.',
                 style: TextStyle(
                   fontSize: 13,
                   color: Colors.grey.shade600,
