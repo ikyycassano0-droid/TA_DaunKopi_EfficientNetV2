@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
@@ -37,7 +38,7 @@ class PreprocessResult {
 
 // ======================================================================
 // FUNGSI PREPROCESSING CITRA DI BACKGROUND (ISOLATE)
-// Memvalidasi Daun Kopi Asli & Menolak Benda Mati (Buku, Meja, Wajah, dll.)
+// Memvalidasi Daun Kopi Asli & Menyaring Makanan, Buku, Meja, dll.
 // ======================================================================
 PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
   final decodedImage = img.decodeImage(imageBytes);
@@ -72,16 +73,15 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
 
           // 1. Deteksi klorofil hijau daun tanaman hidup
           final bool isGreen =
-              (g > r * 1.08) && (g > b * 1.12) && (g >= 38.0) && (g <= 245.0);
+              (g > r * 1.10) && (g > b * 1.15) && (g >= 42.0) && (g <= 240.0);
 
           // 2. Deteksi bercak penyakit tanaman alami (kuning, jingga karat, atau cokelat nekrotik)
-          // Catatan Ilmiah: Warna merah tinta/cat buku memiliki rasio R jauh lebih tinggi dari G (r >= g * 1.55).
-          // Sedangkan jaringan bercak tanaman kopi memiliki warna cokelat/kuning alami (r < g * 1.55).
+          // Memfilter minyak makanan / cat merah (r < g * 1.50)
           final bool isPlantDisease = (r > b * 1.25) &&
-              (g > b * 1.05) &&
-              (r >= 45.0) &&
-              (r <= 235.0) &&
-              (r < g * 1.55);
+              (g > b * 1.08) &&
+              (r >= 50.0) &&
+              (r <= 230.0) &&
+              (r < g * 1.50);
 
           if (isGreen) {
             greenChlorophyllCount++;
@@ -99,11 +99,10 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
   final double totalPlantCoverage =
       ((greenChlorophyllCount + plantDiseaseTissueCount) / totalPixels) * 100.0;
 
-  // Syarat Daun Kopi Asli:
-  // 1. Wajib memiliki pigmen klorofil daun hidup minimal 3% dari total area citra.
-  //    (Buku merah, meja kayu, lantai, dan wajah memiliki 0% klorofil sehingga langsung tertolak).
-  // 2. Total jaringan daun (daun hijau + bercak penyakit) minimal 8% dari area bingkai.
-  final bool isLeaf = (greenCoverage >= 3.0) && (totalPlantCoverage >= 8.0);
+  // Standar Helaian Daun Kopi:
+  // Daun kopi yang difoto untuk diagnosa wajib memiliki area helai hijau minimal 8%
+  // dan total area daun minimal 12%. Ini memblokir mie goreng yang hanya memiliki sedikit sawi.
+  final bool isLeaf = (greenCoverage >= 8.0) && (totalPlantCoverage >= 12.0);
 
   return PreprocessResult(
     inputTensor: tensor,
@@ -111,7 +110,7 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
     leafCoverage: totalPlantCoverage,
     validationNote: isLeaf
         ? 'Karakteristik visual jaringan daun terdeteksi.'
-        : 'Karakteristik visual daun tidak terdeteksi pada citra masukan.',
+        : 'Karakteristik visual daun kopi tidak terdeteksi pada citra masukan.',
   );
 }
 
@@ -156,6 +155,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
 
   Interpreter? _tfliteInterpreter;
   List<String> _classLabels = [];
+  Map<String, dynamic> _diseaseDatabase = {};
 
   late AnimationController _scannerAnimController;
   late Animation<double> _scannerSmoothAnimation;
@@ -183,7 +183,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     super.dispose();
   }
 
-  // 1. Memuat Model TFLite dengan Multi-Threading (4 Core CPU)
+  // 1. Memuat Model TFLite dengan Multi-Threading (4 Core CPU) & JSON Lokal
   Future<void> _initModelAndLabels() async {
     try {
       final options = InterpreterOptions()..threads = 4;
@@ -200,6 +200,16 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
           .map((line) => line.trim())
           .where((line) => line.isNotEmpty)
           .toList();
+
+      // Memuat berkas JSON lokal informasi penanganan penyakit
+      try {
+        final jsonContent =
+            await rootBundle.loadString('assets/models/penanganan_kopi.json');
+        _diseaseDatabase = json.decode(jsonContent) as Map<String, dynamic>;
+        debugPrint("Berkas JSON penanganan_kopi.json Berhasil Dimuat.");
+      } catch (jsonErr) {
+        debugPrint("Menggunakan basis data penanganan internal: $jsonErr");
+      }
 
       if (mounted) setState(() {});
       debugPrint("Model dan Label TFLite Berhasil Dimuat: $_classLabels");
@@ -264,7 +274,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     }
   }
 
-  // 4. Preprocessing di Background Worker, Validasi & Prediksi Murni Model
+  // 4. Preprocessing di Background Worker, Validasi & Prediksi Sesuai Desain Colab
   Future<void> _predictDisease(File imageFile) async {
     if (_tfliteInterpreter == null || _classLabels.isEmpty) {
       if (!mounted) return;
@@ -290,6 +300,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     }
 
     try {
+      final totalStopwatch = Stopwatch()..start();
       final imageBytes = await imageFile.readAsBytes();
 
       // Jalankan decode citra di Background Isolate
@@ -303,9 +314,11 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
         return;
       }
 
-      // Saring jika citra terbukti bukan daun (buku, meja, lantai, wajah, dinding, dll.)
+      // Saring jika foto bukan daun (makanan, mie, buku, lantai, meja, wajah, dll.)
       if (!prep.isLeafDetected) {
-        debugPrint("Ditolak Validasi Visual Citra: ${prep.validationNote}");
+        totalStopwatch.stop();
+        debugPrint(
+            "Ditolak Validasi Visual Daun (${totalStopwatch.elapsedMilliseconds} ms): ${prep.validationNote}");
 
         if (!mounted) return;
         setState(() {
@@ -316,20 +329,25 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
         return;
       }
 
-      // Jalankan inferensi EfficientNetV2-M murni
+      // Jalankan inferensi EfficientNetV2-M
       var outputTensor = List.filled(1 * _classLabels.length, 0.0)
           .reshape([1, _classLabels.length]);
 
+      final inferenceStopwatch = Stopwatch()..start();
       _tfliteInterpreter!.run(prep.inputTensor, outputTensor);
+      inferenceStopwatch.stop();
+      totalStopwatch.stop();
 
       // Konversi aman untuk tipe data TFLite
       List<double> rawOutputs = (outputTensor[0] as List)
           .map((e) => (e as num).toDouble())
           .toList();
-      debugPrint("RAW OUTPUT DARI MODEL: $rawOutputs");
+      debugPrint("SKOR RAW LOGIT DARI MODEL: $rawOutputs");
+      debugPrint(
+          "WAKTU INFERENSI TFLITE: ${inferenceStopwatch.elapsedMilliseconds} ms | TOTAL WAKTU RESPONS: ${totalStopwatch.elapsedMilliseconds} ms");
 
       // ======================================================================
-      // INFERENSI MURNI MENGIKUTI PREDIKSI MODEL EFFICIENTNETV2-M
+      // VALIDASI SKOR FITUR MODEL (PERSIS DENGAN CELL 12 & 14 COLAB)
       // ======================================================================
       double maxScore = rawOutputs.reduce(math.max);
       int topIndex = rawOutputs.indexOf(maxScore);
@@ -339,16 +357,26 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
           (rawOutputs.reduce((a, b) => a + b) - 1.0).abs() > 0.08;
 
       double calculatedConfidence = 0.0;
+      bool isAcceptedAsCoffee = false;
 
       if (isLogitOutput) {
-        // Hitung probabilitas Softmax matematis secara murni
+        // Hitung probabilitas Softmax matematis secara murni dari Logit
         List<double> expList =
             rawOutputs.map((z) => math.exp(z - maxScore)).toList();
         double sumExp = expList.reduce((a, b) => a + b);
         List<double> softmax = expList.map((e) => e / sumExp).toList();
         calculatedConfidence = softmax[topIndex] * 100.0;
+
+        // Ambang batas representasi fitur daun kopi (seimbang untuk kebun & lab)
+        // Daun kopi asli bernilai 6.5 - 18.0, sedangkan mie goreng/benda lain < 4.5
+        const double batasMinimalLogit = 5.5;
+        const double batasKeyakinanMinimal = 70.0;
+
+        isAcceptedAsCoffee = (maxScore >= batasMinimalLogit) &&
+            (calculatedConfidence >= batasKeyakinanMinimal);
       } else {
         calculatedConfidence = maxScore * 100.0;
+        isAcceptedAsCoffee = calculatedConfidence >= 75.0;
       }
 
       // Format persentase riil dengan desimal realistis (tidak membulat kaku ke 100.0%)
@@ -358,12 +386,18 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
       }
 
       debugPrint(
-          "Hasil Prediksi Model: ${_classLabels[topIndex]} | Tingkat Keyakinan: ${displayConfidence.toStringAsFixed(2)}%");
+          "Skor Tertinggi: ${maxScore.toStringAsFixed(2)} | Diterima: $isAcceptedAsCoffee | Keyakinan: ${displayConfidence.toStringAsFixed(2)}%");
 
       if (!mounted) return;
       setState(() {
-        _confidenceScore = displayConfidence;
-        _predictionResult = _classLabels[topIndex];
+        if (isAcceptedAsCoffee) {
+          _confidenceScore = displayConfidence;
+          _predictionResult = _classLabels[topIndex];
+        } else {
+          _confidenceScore = 0.0;
+          _predictionResult = "Ini bukan daun kopi";
+        }
+
         _isProcessing = false;
       });
     } catch (e) {
@@ -384,23 +418,48 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
   Map<String, dynamic> _getDiseaseDetail(String label) {
     final lower = label.toLowerCase();
 
+    // 0. BACA DARI BERKAS JSON LOKAL (JIKA TERSEDIA)
+    if (_diseaseDatabase.isNotEmpty) {
+      if (lower.contains('bukan daun kopi') &&
+          _diseaseDatabase.containsKey('bukan_daun_kopi')) {
+        return Map<String, dynamic>.from(_diseaseDatabase['bukan_daun_kopi']);
+      }
+      if (lower.contains('healthy') &&
+          _diseaseDatabase.containsKey('healthy')) {
+        return Map<String, dynamic>.from(_diseaseDatabase['healthy']);
+      }
+      if ((lower.contains('rust') || lower.contains('karat')) &&
+          _diseaseDatabase.containsKey('leaf_rust')) {
+        return Map<String, dynamic>.from(_diseaseDatabase['leaf_rust']);
+      }
+      if ((lower.contains('cerscospora') ||
+              lower.contains('cercospora') ||
+              lower.contains('bercak')) &&
+          _diseaseDatabase.containsKey('cercospora')) {
+        return Map<String, dynamic>.from(_diseaseDatabase['cercospora']);
+      }
+      if (lower.contains('phoma') && _diseaseDatabase.containsKey('phoma')) {
+        return Map<String, dynamic>.from(_diseaseDatabase['phoma']);
+      }
+    }
+
     // 1. PENANGANAN CITRA TIDAK TERIDENTIFIKASI / NON-DAUN (MANUSIAWI & ILMIAH)
     if (lower.contains('bukan daun kopi')) {
       return {
         'title': 'Objek Tidak Teridentifikasi Sebagai Daun Kopi',
-        'pathogen': 'Objek Non-Tanaman atau Kualitas Citra Tidak Memadai',
+        'pathogen': 'Objek Non-Tanaman Kopi / Citra Tidak Sesuai',
         'desc':
-            'Sistem mendeteksi bahwa foto yang dimasukkan bukan merupakan daun kopi, atau kualitas foto belum memenuhi standar analisis visual. Aplikasi ini khusus dirancang untuk mendiagnosa kesehatan tanaman kopi.',
+            'Sistem mendeteksi bahwa objek pada foto bukan merupakan daun kopi, atau pola visual tidak sesuai dengan karakteristik penyakit daun kopi. Model EfficientNetV2-M secara khusus dilatih hanya untuk mendiagnosa kesehatan tanaman kopi.',
         'gejala': [
-          'Karakteristik visual jaringan klorofil daun tanaman tidak terdeteksi secara dominan pada foto.',
-          'Objek yang terpotret berupa benda non-tanaman (seperti buku, meja, lantai, dinding, atau wajah).',
-          'Foto buram (blur), terlalu gelap, silau akibat pantulan cahaya, atau jarak kamera terlalu jauh dari helai daun.'
+          'Karakteristik biologis helaian daun kopi tidak terpenuhi pada foto masukan.',
+          'Terdeteksi objek non-daun (seperti makanan, buku, meja, lantai, dinding, atau benda lain).',
+          'Pola fitur visual tidak mencapai batas kecocokan representasi daun kopi.'
         ],
         'pengendalian': {
           'Panduan Pengambilan Gambar': [
-            'Arahkan kamera tepat pada helai daun kopi asli dari jarak dekat (sekitar 10 - 20 cm) hingga daun memenuhi sebagian besar layar.',
-            'Pastikan lensa kamera bersih, fokus gambar tajam, dan pencahayaan terang merata.',
-            'Hindari mengambil foto benda mati, buku, atau lantai.'
+            'Arahkan kamera tepat pada satu helai daun kopi asli dari jarak dekat (sekitar 10 - 20 cm).',
+            'Pastikan helai daun kopi mendominasi sebagian besar area bidikan kamera.',
+            'Hindari mengambil foto makanan, buku, lantai, atau objek selain daun kopi.'
           ]
         }
       };
@@ -1047,7 +1106,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
 
     final detail = _getDiseaseDetail(_predictionResult!);
     final Map<String, dynamic> pengendalian =
-        detail['pengendalian'] as Map<String, dynamic>;
+        Map<String, dynamic>.from(detail['pengendalian'] as Map);
     final List<dynamic> gejalaList = detail['gejala'] as List<dynamic>;
 
     Color statusColor;

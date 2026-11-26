@@ -44,6 +44,9 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
+            // Mencegah R8 memotong library C++ TFLite pada mode Release APK
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

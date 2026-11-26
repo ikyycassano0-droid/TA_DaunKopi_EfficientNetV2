@@ -26,3 +26,4 @@ flutter:
   assets:
     - assets/models/model_kopi_efficientnetv2.tflite
     - assets/models/labels.txt
+    - assets/models/penanganan_kopi.json

@@ -1,0 +1,119 @@
+{
+  "bukan_daun_kopi": {
+    "title": "Objek Tidak Teridentifikasi Sebagai Daun Kopi",
+    "pathogen": "Objek Non-Tanaman Kopi / Citra Tidak Sesuai",
+    "desc": "Sistem mendeteksi bahwa objek pada foto bukan merupakan daun kopi, atau pola visual tidak sesuai dengan karakteristik penyakit daun kopi. Model EfficientNetV2-M secara khusus dilatih hanya untuk mendiagnosa kesehatan tanaman kopi.",
+    "gejala": [
+      "Karakteristik biologis helaian daun kopi tidak terpenuhi pada foto masukan.",
+      "Terdeteksi objek non-daun (seperti makanan, buku, meja, lantai, dinding, atau benda lain).",
+      "Pola fitur visual tidak mencapai batas kecocokan representasi daun kopi."
+    ],
+    "pengendalian": {
+      "Panduan Pengambilan Gambar": [
+        "Arahkan kamera tepat pada satu helai daun kopi asli dari jarak dekat (sekitar 10 - 20 cm).",
+        "Pastikan helai daun kopi mendominasi sebagian besar area bidikan kamera.",
+        "Hindari mengambil foto makanan, buku, lantai, atau objek selain daun kopi."
+      ]
+    }
+  },
+  "healthy": {
+    "title": "Tanaman Kopi Sehat",
+    "pathogen": "Kondisi Prima (Bebas Patogen)",
+    "desc": "Helai daun dalam kondisi prima, warna hijau mengkilap merata, pertulangan daun kokoh, serta bebas dari spora jamur atau serangan hama.",
+    "gejala": [
+      "Permukaan atas dan bawah daun bersih mengilap tanpa bercak klorosis.",
+      "Pertumbuhan tunas dan cabang baru seimbang dan segar.",
+      "Daya fotosintesis optimal untuk pembentukan buah kopi berkualitas."
+    ],
+    "pengendalian": {
+      "Kultur Teknis": [
+        "Pertahankan pemupukan berimbang NPK & pupuk organik sesuai anjuran.",
+        "Lakukan pemangkasan tunas air (wiwil) teratur untuk aerasi kanopi tanaman.",
+        "Pertahankan pohon pelindung agar daun tidak mengalami cekaman panas ekstrim."
+      ],
+      "Sanitasi": [
+        "Jaga kebersihan piringan pohon dari gulma sarang serangga pembawa penyakit.",
+        "Pastikan saluran drainase air lancar agar area perakaran tidak becek."
+      ]
+    }
+  },
+  "leaf_rust": {
+    "title": "Karat Daun Kopi",
+    "pathogen": "Jamur Hemileia vastatrix",
+    "desc": "Disebabkan oleh jamur Hemileia vastatrix dan dapat menurunkan produksi sebesar 20 - 70%. Penyakit sangat mudah berkembang pada kelembaban rendah dan suhu tinggi. Menyebar melalui percikan air hujan, angin, semut, burung, dan manusia.",
+    "gejala": [
+      "Daun yang terinfeksi terdapat bercak kuning, pada bagian bawah daun terdapat serbuk warna kuning kemudian berubah menjadi coklat.",
+      "Pada permukaan bawah daun terdapat tepung berwarna orange/jingga.",
+      "Daun yang terserang gugur sebelum waktunya. Serangan berat dapat menyebabkan pohon menjadi gundul, cabang/ranting mati dan akhirnya tanaman mati.",
+      "Penyakit ini terutama menyerang kopi Arabika karena memiliki karakter daun yang tipis."
+    ],
+    "pengendalian": {
+      "Kultur Teknis": [
+        "Penggunaan klon tahan (Komasti, As2K).",
+        "Pengendalian gulma secara manual.",
+        "Pemupukan berimbang sesuai anjuran.",
+        "Sambung pucuk, rejuvinasi, atau replanting dengan klon tahan.",
+        "Penanaman kopi arabika pada ketinggian >= 800 m dpl."
+      ],
+      "Mekanis": [
+        "Pengaturan tanaman penaung melalui pemangkasan (naungan maksimal 70% dan cahaya matahari langsung masuk 30%)."
+      ],
+      "Pestisida Nabati": [
+        "Aplikasi pestisida nabati (ekstrak biji mahoni atau asap cair) konsentrasi 5%.",
+        "Aplikasi pestisida nabati minyak cengkeh (< 1%) dan MS APH."
+      ],
+      "Kimiawi": [
+        "Aplikasi fungisida berbahan aktif azoksistrobin dan tebukonazol yang telah terdaftar dan mendapat izin Menteri Pertanian."
+      ]
+    }
+  },
+  "cercospora": {
+    "title": "Bercak Daun Cercospora (Brown Eye Spot)",
+    "pathogen": "Jamur Cercospora coffeicola",
+    "desc": "Penyebab penyakit bercak daun kopi yaitu jamur Cercospora coffeicola yang disebut juga brown eye spot. Jamur C. coffeicola menyerang daun dan buah, dengan tingkat kerusakan pada daun terutama menyerang di perbenihan.",
+    "gejala": [
+      "Gejala serangan pada daun terdapat bercak-bercak bulat, coklat kemerahan atau coklat tua berbatas jelas dan konsentris.",
+      "Pada bercak yang tua terdapat pusat berwarna putih kelabu, seperti tepung hitam yang merupakan konidium jamur.",
+      "Bercak C. coffeicola tampak paling jelas kalau dilihat dari sebelah atas daun, umumnya garis tengah bercak kurang dari 5 mm dan bercincin-cincin (tanda halo).",
+      "Dalam cuaca lembab dapat terjadi bercak-bercak yang lebih besar, dan serangan berat dapat menyebabkan rontoknya daun."
+    ],
+    "pengendalian": {
+      "Kultur Teknis": [
+        "Mengatur kelembaban dengan cara mengurangi penyiraman.",
+        "Menjarangkan atap penaung sehingga sinar matahari dapat langsung masuk."
+      ],
+      "Sanitasi": [
+        "Sanitasi dengan menggunting daun yang sakit kemudian dibakar atau dibenamkan di dalam tanah."
+      ],
+      "Kimiawi": [
+        "Aplikasi fungisida berbahan aktif propineb yang telah terdaftar dan mendapat izin Menteri Pertanian."
+      ]
+    }
+  },
+  "phoma": {
+    "title": "Bercak Daun Phoma (Phoma Leaf Spot)",
+    "pathogen": "Jamur Phoma tarda (R.W. Stewart) H. Verm.",
+    "desc": "Penyakit bercak Phoma merupakan salah satu penyakit utama pada pembibitan dan pertanaman Coffea arabica yang menimbulkan kehilangan hasil 15 hingga 43%. Penyakit berkembang pesat pada suhu dingin di bawah 20 derajat Celcius serta kebasahan daun (leaf wetness) berkepanjangan.",
+    "gejala": [
+      "Timbul lesi nekrotik berupa bercak luka berwarna cokelat tua hingga gelap pada helaian daun kopi (leaf lesions).",
+      "Infeksi meluas menyebabkan kematian ranting dan cabang mengering (dry branches / twig dieback).",
+      "Menyebabkan pembusukan bunga serta buah muda yang diikuti kerontokan massal (rotted flowers and fruits with subsequent falling).",
+      "Serangan menurunkan kandungan klorofil a dan b, membatasi laju fotosintesis bersih (LPR), serta memperluas area jaringan nekrotik daun."
+    ],
+    "pengendalian": {
+      "Kultur Teknis": [
+        "Aplikasi pupuk daun berbasis hara mikro Kobalt dan Molibdenum (Co 2% dan Mo 3%) dengan dosis 2.5 ml/L untuk meningkatkan aktivitas enzim PAL dan ketahanan alami daun.",
+        "Pemberian pupuk daun berbasis hara makro-mikro (N 10%, S 4%, B, Fe 5%, Zn 5%) dosis 7.5 ml/L untuk memulihkan kadar klorofil a/b dan laju fotosintesis.",
+        "Aplikasi fosfit mangan (P2O5 30% dan Mn 9%) dosis 3.5 ml/L untuk memperkuat sintesis lignin dinding sel dan meningkatkan laju fotosintesis hingga 138-215%.",
+        "Pengaturan sirkulasi udara pembibitan untuk mengurangi masa basah daun (leaf wetness) dan menjaga suhu kanopi."
+      ],
+      "Sanitasi": [
+        "Pemangkasan sanitasi pada ranting yang mengering (dieback) serta pemusnahan daun dan buah terinfeksi yang gugur agar spora konidia tidak menyebar."
+      ],
+      "Kimiawi": [
+        "Aplikasi fungisida berbahan aktif boskalid (boscalid 0.375 g/L) yang terbukti memberikan efisiensi pengendalian hingga 97%.",
+        "Aplikasi fungisida protektif tembaga atau fungisida sistemik berizin resmi Menteri Pertanian secara preventif menjelang periode suhu dingin dan hujan basah."
+      ]
+    }
+  }
+}
