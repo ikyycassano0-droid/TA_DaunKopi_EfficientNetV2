@@ -37,8 +37,8 @@ class PreprocessResult {
 }
 
 // ======================================================================
-// FUNGSI PREPROCESSING CITRA DI BACKGROUND (ISOLATE)
-// Memvalidasi Daun Kopi Asli & Menyaring Makanan, Buku, Meja, dll.
+// FUNGSI PREPROCESSING CITRA DI BACKGROUND (ISOLATE) - VERSI ANTI BENDA HIJAU
+// Memvalidasi Daun Kopi Asli, Tekstur Tulang Daun, & Menyaring Benda Hijau Polos
 // ======================================================================
 PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
   final decodedImage = img.decodeImage(imageBytes);
@@ -55,7 +55,15 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
   final resizedImage = img.copyResize(decodedImage, width: 384, height: 384);
 
   int greenChlorophyllCount = 0;
+  int artificialGreenCount = 0;
   int plantDiseaseTissueCount = 0;
+  int borderGreenCount = 0;
+  int borderTotalCount = 0;
+
+  double sumGreen = 0.0;
+  double sumGreenSq = 0.0;
+  int naturalEdgeTextureCount = 0;
+
   const int totalPixels = 384 * 384;
 
   // Tensor input Float [1, 384, 384, 3] dalam rentang [0.0 - 255.0]
@@ -71,22 +79,53 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
           final double g = pixel.g.toDouble();
           final double b = pixel.b.toDouble();
 
-          // 1. Deteksi klorofil hijau daun tanaman hidup
-          final bool isGreen =
-              (g > r * 1.10) && (g > b * 1.15) && (g >= 42.0) && (g <= 240.0);
+          // 1. Deteksi klorofil hijau daun tanaman hidup alami
+          // Menolak hijau kebiruan/cyan/cat (r >= b * 0.78) & hijau neon/stabilo (g < r * 2.60)
+          final bool isNaturalChlorophyll = (g > r * 1.08) &&
+              (g > b * 1.15) &&
+              (r >= b * 0.78) &&
+              (g < r * 2.60) &&
+              (g >= 38.0) &&
+              (g <= 235.0);
+
+          // Deteksi warna hijau buatan (cat, plastik, baju hijau neon/toska)
+          final bool isArtificialGreen =
+              (g > r && g > b) && !isNaturalChlorophyll;
 
           // 2. Deteksi bercak penyakit tanaman alami (kuning, jingga karat, atau cokelat nekrotik)
           // Memfilter minyak makanan / cat merah (r < g * 1.50)
           final bool isPlantDisease = (r > b * 1.25) &&
               (g > b * 1.08) &&
-              (r >= 50.0) &&
+              (r >= 48.0) &&
               (r <= 230.0) &&
               (r < g * 1.50);
 
-          if (isGreen) {
+          if (isNaturalChlorophyll) {
             greenChlorophyllCount++;
+            sumGreen += g;
+            sumGreenSq += (g * g);
+          } else if (isArtificialGreen) {
+            artificialGreenCount++;
           } else if (isPlantDisease) {
             plantDiseaseTissueCount++;
+          }
+
+          // Cek area pinggir/tepi bingkai foto (mendeteksi tembok/baju/kertas hijau 1 layar penuh)
+          final bool isBorderArea = (x < 20 || x > 364 || y < 20 || y > 364);
+          if (isBorderArea) {
+            borderTotalCount++;
+            if (isNaturalChlorophyll || isArtificialGreen) {
+              borderGreenCount++;
+            }
+          }
+
+          // 3. Cek gradien mikro (urat/tulang daun & tekstur permukaan daun)
+          if (x > 0 && y > 0 && (isNaturalChlorophyll || isPlantDisease)) {
+            final prevPixel = resizedImage.getPixel(x - 1, y - 1);
+            final double diff = (g - prevPixel.g.toDouble()).abs();
+            if (diff >= 1.5 && diff <= 35.0) {
+              naturalEdgeTextureCount++;
+            }
           }
 
           return [r, g, b];
@@ -96,13 +135,44 @@ PreprocessResult _preprocessAndValidateImageSync(Uint8List imageBytes) {
   );
 
   final double greenCoverage = (greenChlorophyllCount / totalPixels) * 100.0;
+  final double artificialCoverage =
+      (artificialGreenCount / totalPixels) * 100.0;
   final double totalPlantCoverage =
       ((greenChlorophyllCount + plantDiseaseTissueCount) / totalPixels) * 100.0;
 
-  // Standar Helaian Daun Kopi:
-  // Daun kopi yang difoto untuk diagnosa wajib memiliki area helai hijau minimal 8%
-  // dan total area daun minimal 12%. Ini memblokir mie goreng yang hanya memiliki sedikit sawi.
-  final bool isLeaf = (greenCoverage >= 8.0) && (totalPlantCoverage >= 12.0);
+  // Hitung standar deviasi (variasi pencahayaan & tulang daun) pada area hijau
+  double greenStdDev = 0.0;
+  if (greenChlorophyllCount > 100) {
+    final double meanG = sumGreen / greenChlorophyllCount;
+    final double variance =
+        (sumGreenSq / greenChlorophyllCount) - (meanG * meanG);
+    greenStdDev = variance > 0 ? math.sqrt(variance) : 0.0;
+  }
+
+  // Rasio tekstur tulang daun terhadap total piksel daun
+  final int totalLeafPixels = greenChlorophyllCount + plantDiseaseTissueCount;
+  final double textureRatio = totalLeafPixels > 0
+      ? (naturalEdgeTextureCount / totalLeafPixels) * 100.0
+      : 0.0;
+
+  // Rasio hijau di tepi bingkai (menolak benda/dinding hijau rata satu layar penuh)
+  final double borderGreenRatio = borderTotalCount > 0
+      ? (borderGreenCount / borderTotalCount) * 100.0
+      : 0.0;
+
+  // Standar Helaian Daun Kopi Asli:
+  final bool hasValidCoverage =
+      (greenCoverage >= 8.0) && (totalPlantCoverage >= 12.0);
+  final bool isNotArtificialColor = artificialCoverage < (greenCoverage * 0.8);
+  final bool hasOrganicLeafTexture =
+      (greenStdDev >= 7.5) && (textureRatio >= 6.0);
+  final bool isNotFlatGreenWall =
+      !(borderGreenRatio > 90.0 && greenStdDev < 16.0);
+
+  final bool isLeaf = hasValidCoverage &&
+      isNotArtificialColor &&
+      hasOrganicLeafTexture &&
+      isNotFlatGreenWall;
 
   return PreprocessResult(
     inputTensor: tensor,
@@ -249,32 +319,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
     }
   }
 
-  // 3. Menarik Gambar Sampel Bawaan (Local Asset)
-  Future<void> _loadSampleAsset(String assetPath) async {
-    try {
-      final byteData = await rootBundle.load(assetPath);
-      final tempDir = await Directory.systemTemp.createTemp();
-      final tempFile = File('${tempDir.path}/sample_leaf.jpg');
-      await tempFile.writeAsBytes(byteData.buffer.asUint8List());
-
-      if (!mounted) return;
-      setState(() {
-        _selectedImage = tempFile;
-        _predictionResult = null;
-        _isProcessing = true;
-      });
-
-      _predictDisease(tempFile);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isProcessing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Foto sampel belum tersedia di $assetPath')),
-      );
-    }
-  }
-
-  // 4. Preprocessing di Background Worker, Validasi & Prediksi Sesuai Desain Colab
+  // 3. Preprocessing di Background Worker, Validasi & Prediksi Sesuai Desain Colab
   Future<void> _predictDisease(File imageFile) async {
     if (_tfliteInterpreter == null || _classLabels.isEmpty) {
       if (!mounted) return;
@@ -314,7 +359,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
         return;
       }
 
-      // Saring jika foto bukan daun (makanan, mie, buku, lantai, meja, wajah, dll.)
+      // Saring jika foto bukan daun (makanan, mie, buku, lantai, meja, wajah, benda hijau polos, dll.)
       if (!prep.isLeafDetected) {
         totalStopwatch.stop();
         debugPrint(
@@ -347,7 +392,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
           "WAKTU INFERENSI TFLITE: ${inferenceStopwatch.elapsedMilliseconds} ms | TOTAL WAKTU RESPONS: ${totalStopwatch.elapsedMilliseconds} ms");
 
       // ======================================================================
-      // VALIDASI SKOR FITUR MODEL (PERSIS DENGAN CELL 12 & 14 COLAB)
+      // VALIDASI SKOR FITUR MODEL (DENGAN FILTER ANTI BENDA HIJAU PADA HEALTHY)
       // ======================================================================
       double maxScore = rawOutputs.reduce(math.max);
       int topIndex = rawOutputs.indexOf(maxScore);
@@ -367,16 +412,20 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
         List<double> softmax = expList.map((e) => e / sumExp).toList();
         calculatedConfidence = softmax[topIndex] * 100.0;
 
-        // Ambang batas representasi fitur daun kopi (seimbang untuk kebun & lab)
-        // Daun kopi asli bernilai 6.5 - 18.0, sedangkan mie goreng/benda lain < 4.5
-        const double batasMinimalLogit = 5.5;
-        const double batasKeyakinanMinimal = 70.0;
+        // Cek apakah kelas yang diprediksi adalah Healthy
+        final String predictedLabel = _classLabels[topIndex].toLowerCase();
+        final bool isPredictedHealthy = predictedLabel.contains('healthy');
+
+        // Kelas Healthy wajib memiliki ambang batas Logit lebih tinggi (7.8) dan Confidence >= 85%
+        // agar benda hijau sembarangan tidak dianggap sebagai Daun Sehat.
+        final double batasMinimalLogit = isPredictedHealthy ? 7.8 : 5.5;
+        final double batasKeyakinanMinimal = isPredictedHealthy ? 85.0 : 70.0;
 
         isAcceptedAsCoffee = (maxScore >= batasMinimalLogit) &&
             (calculatedConfidence >= batasKeyakinanMinimal);
       } else {
         calculatedConfidence = maxScore * 100.0;
-        isAcceptedAsCoffee = calculatedConfidence >= 75.0;
+        isAcceptedAsCoffee = calculatedConfidence >= 80.0;
       }
 
       // Format persentase riil dengan desimal realistis (tidak membulat kaku ke 100.0%)
@@ -413,7 +462,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
       _predictionResult?.toLowerCase().contains('bukan daun kopi') ?? false;
 
   // ======================================================================
-  // 5. DETAIL GEJALA & PENGENDALIAN RESMI (DENGAN ALASAN PENOLAKAN ELEGAN)
+  // 4. DETAIL GEJALA & PENGENDALIAN RESMI (DENGAN ALASAN PENOLAKAN ELEGAN)
   // ======================================================================
   Map<String, dynamic> _getDiseaseDetail(String label) {
     final lower = label.toLowerCase();
@@ -724,8 +773,6 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
                   ),
                   const SizedBox(height: 22),
                   _buildActionButtons(),
-                  const SizedBox(height: 12),
-                  _buildSampleButton(),
                   const SizedBox(height: 26),
                 ]),
               ),
@@ -912,7 +959,7 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
                       ),
                       const SizedBox(width: 7),
                       const Text(
-                        'AI ANALYZING',
+                        'ANALYZING',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 10,
@@ -1545,81 +1592,6 @@ class _CoffeeClassifierScreenState extends State<CoffeeClassifierScreen>
           ),
         ),
       ],
-    );
-  }
-
-  // Tombol Cepat Sampel Uji Bawaan
-  Widget _buildSampleButton() {
-    return OutlinedButton.icon(
-      onPressed: () => _showSampleDialog(context),
-      icon: const Icon(Icons.collections_bookmark_outlined, size: 18),
-      label: const Text(
-        'Uji Menggunakan Sampel Citra Daun',
-        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-      ),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: const Color(0xFF1B432C),
-        side: BorderSide(color: Colors.green.shade700, width: 1.4),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
-  }
-
-  void _showSampleDialog(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Pilih Contoh Daun Uji:',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              ListTile(
-                leading: const Icon(Icons.check_circle, color: Colors.green),
-                title: const Text('Contoh Daun Sehat (Healthy)'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _loadSampleAsset('assets/samples/healthy.jpg');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.warning, color: Colors.orange),
-                title: const Text('Contoh Karat Daun (Leaf Rust)'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _loadSampleAsset('assets/samples/rust.jpg');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.lens, color: Colors.brown),
-                title: const Text('Contoh Bercak Daun (Cercospora)'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _loadSampleAsset('assets/samples/cercospora.jpg');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.circle, color: Colors.blueGrey),
-                title: const Text('Contoh Bercak Phoma'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _loadSampleAsset('assets/samples/phoma.jpg');
-                },
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
